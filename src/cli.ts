@@ -125,6 +125,7 @@ program
     "Start with 'claude' or 'bash' shell",
     /^(claude|bash)$/i,
   )
+  .option("--no-web", "Disable web UI (use terminal attach)")
   .action(async (options) => {
     console.log(chalk.blue("🚀 Starting new Claude Sandbox container..."));
 
@@ -136,6 +137,7 @@ program
     config.targetBranch = options.branch;
     config.remoteBranch = options.remoteBranch;
     config.prNumber = options.pr;
+    config.useWebUI = options.web !== false;
     if (options.shell) {
       config.defaultShell = options.shell.toLowerCase();
     }
