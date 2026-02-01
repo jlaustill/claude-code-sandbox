@@ -34,6 +34,9 @@ export class ContainerManager {
       // Copy Claude configuration if it exists
       await this._copyClaudeConfig(container);
 
+      // Configure bypass permissions mode to skip confirmation prompt
+      await this._setupBypassPermissions(container);
+
       // Copy git configuration if it exists
       await this._copyGitConfig(container);
     } catch (error) {
@@ -826,6 +829,78 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
         error,
       );
       // Don't throw - this is not critical for container operation
+    }
+  }
+
+  private async _setupBypassPermissions(
+    container: Docker.Container,
+  ): Promise<void> {
+    try {
+      console.log(chalk.blue("• Configuring bypass permissions mode..."));
+
+      // Create or update settings.json to enable bypass permissions mode
+      // This skips the "By proceeding, you accept all responsibility" confirmation prompt
+      const settingsContent = JSON.stringify(
+        {
+          permissions: {
+            defaultMode: "bypassPermissions",
+          },
+        },
+        null,
+        2,
+      );
+
+      const setupExec = await container.exec({
+        Cmd: [
+          "/bin/bash",
+          "-c",
+          `
+          # Ensure .claude directory exists
+          mkdir -p /home/claude/.claude &&
+
+          # Check if settings.json exists
+          if [ -f /home/claude/.claude/settings.json ]; then
+            # Merge with existing settings using jq if available, otherwise replace
+            if command -v jq &> /dev/null; then
+              # Use jq to merge settings, preserving existing values
+              jq '.permissions.defaultMode = "bypassPermissions"' /home/claude/.claude/settings.json > /tmp/settings.json.tmp &&
+              mv /tmp/settings.json.tmp /home/claude/.claude/settings.json
+            else
+              # No jq, just overwrite (existing settings will be lost)
+              echo '${settingsContent}' > /home/claude/.claude/settings.json
+            fi
+          else
+            # Create new settings file
+            echo '${settingsContent}' > /home/claude/.claude/settings.json
+          fi &&
+
+          # Fix permissions
+          chown -R claude:claude /home/claude/.claude &&
+          chmod 700 /home/claude/.claude &&
+          chmod 600 /home/claude/.claude/settings.json
+          `,
+        ],
+        AttachStdout: true,
+        AttachStderr: true,
+      });
+
+      const stream = await setupExec.start({});
+
+      // Wait for completion
+      await new Promise<void>((resolve, reject) => {
+        stream.on("end", resolve);
+        stream.on("error", reject);
+      });
+
+      console.log(
+        chalk.green("✓ Bypass permissions mode configured (no confirmation prompt)"),
+      );
+    } catch (error) {
+      console.error(
+        chalk.yellow("⚠ Failed to configure bypass permissions:"),
+        error,
+      );
+      // Don't throw - Claude will still work, just with the confirmation prompt
     }
   }
 
