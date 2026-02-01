@@ -790,7 +790,20 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
         const tarFlags = getTarFlags();
         // On macOS, also exclude extended attributes that cause Docker issues
         const additionalFlags = (process.platform as string) === "darwin" ? "--no-xattrs --no-fflags" : "";
-        const combinedFlags = `${tarFlags} ${additionalFlags}`.trim();
+        // Exclude directories that are large, temporary, or actively written to
+        const excludeFlags = [
+          "--exclude=.claude/debug",
+          "--exclude=.claude/cache",
+          "--exclude=.claude/file-history",
+          "--exclude=.claude/session-env",
+          "--exclude=.claude/tasks",
+          "--exclude=.claude/paste-cache",
+          "--exclude=.claude/shell-snapshots",
+          "--exclude=.claude/telemetry",
+          "--exclude=.claude/todos",
+          "--exclude=.claude/statsig",
+        ].join(" ");
+        const combinedFlags = `${tarFlags} ${additionalFlags} ${excludeFlags}`.trim();
         execSync(
           `tar -cf "${tarFile}" ${combinedFlags} -C "${os.homedir()}" .claude`,
           {
