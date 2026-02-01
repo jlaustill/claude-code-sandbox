@@ -212,7 +212,7 @@ export class ClaudeSandbox {
       credentials,
       workDir,
       repoName,
-      dockerImage: this.config.dockerImage || "claude-sandbox:latest",
+      dockerImage: this.config.dockerImage || "claude-code-sandbox:latest",
       prFetchRef,
       remoteFetchRef,
     };
