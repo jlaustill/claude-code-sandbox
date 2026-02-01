@@ -851,18 +851,7 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
     try {
       console.log(chalk.blue("• Configuring bypass permissions mode..."));
 
-      // Create or update settings.json to enable bypass permissions mode
-      // This skips the "By proceeding, you accept all responsibility" confirmation prompt
-      const settingsContent = JSON.stringify(
-        {
-          permissions: {
-            defaultMode: "bypassPermissions",
-          },
-        },
-        null,
-        2,
-      );
-
+      // The settings need to have defaultMode at the root level per Claude Code docs
       const setupExec = await container.exec({
         Cmd: [
           "/bin/bash",
@@ -871,26 +860,34 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
           # Ensure .claude directory exists
           mkdir -p /home/claude/.claude &&
 
-          # Check if settings.json exists
-          if [ -f /home/claude/.claude/settings.json ]; then
-            # Merge with existing settings using jq if available, otherwise replace
+          # Update settings.local.json to set bypass permissions mode
+          # Using settings.local.json as it takes precedence for user preferences
+          SETTINGS_FILE="/home/claude/.claude/settings.local.json"
+
+          if [ -f "$SETTINGS_FILE" ]; then
+            # File exists - try to merge with jq, fallback to simple approach
             if command -v jq &> /dev/null; then
-              # Use jq to merge settings, preserving existing values
-              jq '.permissions.defaultMode = "bypassPermissions"' /home/claude/.claude/settings.json > /tmp/settings.json.tmp &&
-              mv /tmp/settings.json.tmp /home/claude/.claude/settings.json
+              jq '. + {"defaultMode": "bypassPermissions"}' "$SETTINGS_FILE" > /tmp/settings.tmp && mv /tmp/settings.tmp "$SETTINGS_FILE"
             else
-              # No jq, just overwrite (existing settings will be lost)
-              echo '${settingsContent}' > /home/claude/.claude/settings.json
+              # No jq - use python if available
+              python3 -c "
+import json
+with open('$SETTINGS_FILE', 'r') as f:
+    data = json.load(f)
+data['defaultMode'] = 'bypassPermissions'
+with open('$SETTINGS_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null || echo '{"defaultMode": "bypassPermissions"}' > "$SETTINGS_FILE"
             fi
           else
             # Create new settings file
-            echo '${settingsContent}' > /home/claude/.claude/settings.json
+            echo '{"defaultMode": "bypassPermissions"}' > "$SETTINGS_FILE"
           fi &&
 
           # Fix permissions
           chown -R claude:claude /home/claude/.claude &&
           chmod 700 /home/claude/.claude &&
-          chmod 600 /home/claude/.claude/settings.json
+          chmod 600 "$SETTINGS_FILE"
           `,
         ],
         AttachStdout: true,
@@ -899,8 +896,9 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
 
       const stream = await setupExec.start({});
 
-      // Wait for completion
+      // Wait for completion (must consume stream data for it to end)
       await new Promise<void>((resolve, reject) => {
+        stream.on("data", () => {}); // Consume data to allow stream to end
         stream.on("end", resolve);
         stream.on("error", reject);
       });

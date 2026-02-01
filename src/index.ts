@@ -156,25 +156,33 @@ export class ClaudeSandbox {
       await this.gitMonitor.start(branchName);
       console.log(chalk.blue("✓ Git monitoring started"));
 
-      // Always launch web UI
-      this.webServer = new WebUIServer(this.docker);
+      // Launch web UI or attach to terminal directly
+      if (this.config.useWebUI !== false) {
+        this.webServer = new WebUIServer(this.docker);
 
-      // Pass repo info to web server
-      this.webServer.setRepoInfo(process.cwd(), branchName);
+        // Pass repo info to web server
+        this.webServer.setRepoInfo(process.cwd(), branchName);
 
-      const webUrl = await this.webServer.start();
+        const webUrl = await this.webServer.start();
 
-      // Open browser to the web UI with container ID
-      const fullUrl = `${webUrl}?container=${containerId}`;
-      await this.webServer.openInBrowser(fullUrl);
+        // Open browser to the web UI with container ID
+        const fullUrl = `${webUrl}?container=${containerId}`;
+        await this.webServer.openInBrowser(fullUrl);
 
-      console.log(chalk.green(`\n✓ Web UI available at: ${fullUrl}`));
-      console.log(
-        chalk.yellow("Keep this terminal open to maintain the session"),
-      );
+        console.log(chalk.green(`\n✓ Web UI available at: ${fullUrl}`));
+        console.log(
+          chalk.yellow("Keep this terminal open to maintain the session"),
+        );
 
-      // Keep the process running
-      await new Promise(() => {}); // This will keep the process alive
+        // Keep the process running
+        await new Promise(() => {}); // This will keep the process alive
+      } else {
+        // Terminal mode - attach directly to container
+        console.log(chalk.green("\n✓ Attaching to container terminal..."));
+        console.log(chalk.yellow("Press Ctrl+P, Ctrl+Q to detach\n"));
+
+        await this.attachToContainer(containerId);
+      }
     } catch (error) {
       console.error(chalk.red("Error:"), error);
       throw error;
@@ -266,6 +274,77 @@ export class ClaudeSandbox {
     if (this.webServer) {
       await this.webServer.stop();
     }
+  }
+
+  private async attachToContainer(containerId: string): Promise<void> {
+    const container = this.docker.getContainer(containerId);
+
+    // Get current terminal size
+    const getTerminalSize = () => ({
+      h: process.stdout.rows || 24,
+      w: process.stdout.columns || 80,
+    });
+
+    const termSize = getTerminalSize();
+
+    // Execute the startup script in an interactive session
+    const dockerExec = await container.exec({
+      Cmd: ["/bin/bash", "-l", "-c", "/home/claude/start-session.sh"],
+      AttachStdin: true,
+      AttachStdout: true,
+      AttachStderr: true,
+      Tty: true,
+    });
+
+    const stream = await dockerExec.start({
+      hijack: true,
+      stdin: true,
+      Tty: true,
+    });
+
+    // Set initial terminal size
+    await dockerExec.resize(termSize);
+
+    // Handle terminal resize events
+    const resizeHandler = async () => {
+      try {
+        await dockerExec.resize(getTerminalSize());
+      } catch {
+        // Ignore resize errors (exec might have ended)
+      }
+    };
+    process.stdout.on("resize", resizeHandler);
+
+    // Set up raw mode for proper terminal handling
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+    process.stdin.resume();
+
+    // Pipe streams
+    process.stdin.pipe(stream);
+    stream.pipe(process.stdout);
+
+    // Handle stream end
+    stream.on("end", async () => {
+      process.stdout.off("resize", resizeHandler);
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+      process.stdin.pause();
+      await this.cleanup();
+      process.exit(0);
+    });
+
+    // Handle Ctrl+C gracefully
+    process.on("SIGINT", async () => {
+      process.stdout.off("resize", resizeHandler);
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+      await this.cleanup();
+      process.exit(0);
+    });
   }
 }
 
