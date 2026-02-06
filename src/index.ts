@@ -8,6 +8,8 @@ import { UIManager } from "./ui";
 import { WebUIServer } from "./web-server";
 import { SandboxConfig } from "./types";
 import { getDockerConfig, isPodman } from "./docker-config";
+import { SHADOW_BASE_PATH } from "./config";
+import { SessionStore } from "./session-store";
 import path from "path";
 
 export class ClaudeSandbox {
@@ -19,6 +21,8 @@ export class ClaudeSandbox {
   private containerManager: ContainerManager;
   private ui: UIManager;
   private webServer?: WebUIServer;
+  private containerId?: string;
+  private sessionStore: SessionStore;
 
   constructor(config: SandboxConfig) {
     this.config = config;
@@ -35,6 +39,7 @@ export class ClaudeSandbox {
     this.gitMonitor = new GitMonitor(this.git);
     this.containerManager = new ContainerManager(this.docker, config);
     this.ui = new UIManager();
+    this.sessionStore = new SessionStore();
   }
 
   async run(): Promise<void> {
@@ -144,9 +149,33 @@ export class ClaudeSandbox {
 
       // Start container
       const containerId = await this.containerManager.start(containerConfig);
+      this.containerId = containerId;
       console.log(
         chalk.green(`✓ Started container: ${containerId.substring(0, 12)}`),
       );
+
+      // Record session for recovery
+      const shadowBasePath = this.config.shadowBasePath || SHADOW_BASE_PATH;
+      const sessionId = containerId.substring(0, 12);
+      await this.sessionStore.addSession({
+        containerId,
+        containerName: `${this.config.containerPrefix || "claude-code-sandbox"}-${Date.now()}`,
+        sessionId,
+        repoPath: process.cwd(),
+        branchName,
+        originalBranch: currentBranch.current,
+        shadowRepoPath: path.join(shadowBasePath, sessionId),
+        startTime: new Date().toISOString(),
+        lastActivityTime: new Date().toISOString(),
+        status: "active",
+        config: {
+          dockerImage: this.config.dockerImage,
+          defaultShell: this.config.defaultShell,
+          autoCommit: this.config.autoCommit,
+          autoCommitIntervalMinutes: this.config.autoCommitIntervalMinutes,
+          restartPolicy: this.config.restartPolicy,
+        },
+      });
 
       // Start monitoring for commits
       this.gitMonitor.on("commit", async (commit) => {
@@ -160,8 +189,15 @@ export class ClaudeSandbox {
       if (this.config.useWebUI !== false) {
         this.webServer = new WebUIServer(this.docker);
 
-        // Pass repo info to web server
+        // Pass repo info and persistence config to web server
         this.webServer.setRepoInfo(process.cwd(), branchName);
+        this.webServer.setShadowBasePath(
+          this.config.shadowBasePath || SHADOW_BASE_PATH,
+        );
+        this.webServer.setAutoCommitConfig(
+          this.config.autoCommit !== false,
+          this.config.autoCommitIntervalMinutes || 5,
+        );
 
         const webUrl = await this.webServer.start();
 
@@ -268,11 +304,24 @@ export class ClaudeSandbox {
     }
   }
 
-  private async cleanup(): Promise<void> {
+  private async cleanup(intentional: boolean = true): Promise<void> {
     await this.gitMonitor.stop();
-    await this.containerManager.cleanup();
+    await this.containerManager.cleanup(intentional);
     if (this.webServer) {
-      await this.webServer.stop();
+      await this.webServer.stop(intentional);
+    }
+
+    // Update session store
+    if (this.containerId) {
+      if (intentional) {
+        await this.sessionStore.removeSession(this.containerId);
+      } else {
+        await this.sessionStore.updateSession(this.containerId, {
+          status: "stopped",
+          exitType: "crash",
+          lastActivityTime: new Date().toISOString(),
+        });
+      }
     }
   }
 

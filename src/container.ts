@@ -259,6 +259,10 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
         Binds: volumes,
         AutoRemove: false,
         NetworkMode: "bridge",
+        RestartPolicy: {
+          Name: this.config.restartPolicy || "unless-stopped",
+          MaximumRetryCount: this.config.restartPolicy === "on-failure" ? 5 : 0,
+        },
       },
       WorkingDir: "/workspace",
       Cmd: ["/bin/bash", "-l"],
@@ -1208,11 +1212,24 @@ EOF
     }
   }
 
-  async cleanup(): Promise<void> {
+  async cleanup(intentional: boolean = true): Promise<void> {
     for (const [, container] of this.containers) {
       try {
-        await container.stop();
-        await container.remove();
+        if (intentional) {
+          // On intentional exit: disable restart policy, stop, and remove
+          try {
+            await container.update({
+              RestartPolicy: { Name: "no", MaximumRetryCount: 0 },
+            });
+          } catch {
+            // Ignore update errors (container may already be stopped)
+          }
+          await container.stop();
+          await container.remove();
+        } else {
+          // On non-intentional exit: just stop, leave container for Docker to restart
+          await container.stop();
+        }
       } catch (error) {
         // Container might already be stopped
       }
