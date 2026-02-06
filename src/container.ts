@@ -821,6 +821,29 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
 
         fs.unlinkSync(tarFile);
 
+        // Fix plugin paths: installed_plugins.json contains absolute paths
+        // from the host (e.g. /home/linux/.claude/plugins/...) which won't
+        // resolve inside the container where home is /home/claude
+        const hostHome = os.homedir();
+        await container
+          .exec({
+            Cmd: [
+              "/bin/bash",
+              "-c",
+              `
+              # Rewrite absolute home paths in plugin registry files
+              for f in /home/claude/.claude/plugins/installed_plugins.json /home/claude/.claude/plugins/known_marketplaces.json; do
+                if [ -f "$f" ]; then
+                  sed -i 's|${hostHome}/|/home/claude/|g' "$f"
+                fi
+              done
+              `,
+            ],
+            AttachStdout: false,
+            AttachStderr: false,
+          })
+          .then((exec) => exec.start({}));
+
         // Fix permissions recursively
         await container
           .exec({
