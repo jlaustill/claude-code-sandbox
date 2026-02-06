@@ -259,6 +259,10 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
         Binds: volumes,
         AutoRemove: false,
         NetworkMode: "bridge",
+        RestartPolicy: {
+          Name: this.config.restartPolicy || "unless-stopped",
+          MaximumRetryCount: this.config.restartPolicy === "on-failure" ? 5 : 0,
+        },
       },
       WorkingDir: "/workspace",
       Cmd: ["/bin/bash", "-l"],
@@ -821,6 +825,29 @@ exec claude --dangerously-skip-permissions' > /start-claude.sh && \\
 
         fs.unlinkSync(tarFile);
 
+        // Fix plugin paths: installed_plugins.json contains absolute paths
+        // from the host (e.g. /home/linux/.claude/plugins/...) which won't
+        // resolve inside the container where home is /home/claude
+        const hostHome = os.homedir();
+        await container
+          .exec({
+            Cmd: [
+              "/bin/bash",
+              "-c",
+              `
+              # Rewrite absolute home paths in plugin registry files
+              for f in /home/claude/.claude/plugins/installed_plugins.json /home/claude/.claude/plugins/known_marketplaces.json; do
+                if [ -f "$f" ]; then
+                  sed -i 's|${hostHome}/|/home/claude/|g' "$f"
+                fi
+              done
+              `,
+            ],
+            AttachStdout: false,
+            AttachStderr: false,
+          })
+          .then((exec) => exec.start({}));
+
         // Fix permissions recursively
         await container
           .exec({
@@ -1185,11 +1212,24 @@ EOF
     }
   }
 
-  async cleanup(): Promise<void> {
+  async cleanup(intentional: boolean = true): Promise<void> {
     for (const [, container] of this.containers) {
       try {
-        await container.stop();
-        await container.remove();
+        if (intentional) {
+          // On intentional exit: disable restart policy, stop, and remove
+          try {
+            await container.update({
+              RestartPolicy: { Name: "no", MaximumRetryCount: 0 },
+            });
+          } catch {
+            // Ignore update errors (container may already be stopped)
+          }
+          await container.stop();
+          await container.remove();
+        } else {
+          // On non-intentional exit: just stop, leave container for Docker to restart
+          await container.stop();
+        }
       } catch (error) {
         // Container might already be stopped
       }

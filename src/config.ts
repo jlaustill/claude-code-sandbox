@@ -11,6 +11,20 @@ const GLOBAL_CONFIG_PATH = path.join(
   "config.json"
 );
 
+// Persistent data locations
+export const SHADOW_BASE_PATH = path.join(
+  os.homedir(),
+  ".cache",
+  "claude-sandbox",
+  "shadows"
+);
+export const SESSION_STORE_PATH = path.join(
+  os.homedir(),
+  ".cache",
+  "claude-sandbox",
+  "sessions.json"
+);
+
 const DEFAULT_CONFIG: SandboxConfig = {
   dockerImage: "claude-code-sandbox:latest",
   autoPush: true,
@@ -21,6 +35,9 @@ const DEFAULT_CONFIG: SandboxConfig = {
   setupCommands: [], // Example: ["npm install", "pip install -r requirements.txt"]
   allowedTools: ["*"], // All tools allowed in sandbox
   includeUntracked: false, // Don't include untracked files by default
+  restartPolicy: "unless-stopped",
+  autoCommit: true,
+  autoCommitIntervalMinutes: 5,
   // maxThinkingTokens: 100000,
   // bashTimeout: 600000, // 10 minutes
 };
