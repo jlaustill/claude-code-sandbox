@@ -866,12 +866,12 @@ export class WebUIServer {
       const container = this.docker.getContainer(containerId);
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 
-      // git add -A stages all changes; git diff --cached --quiet exits 1 when staged changes exist
+      // git add -u stages only tracked files; git diff --cached --quiet exits 1 when staged changes exist
       const commitExec = await container.exec({
         Cmd: [
           "/bin/bash",
           "-c",
-          `cd /workspace && git add -A && git diff --cached --quiet || git commit -m "[auto-save] ${timestamp}"`,
+          `cd /workspace && git add -u && git diff --cached --quiet || git commit -m "[auto-save] ${timestamp}"`,
         ],
         AttachStdout: true,
         AttachStderr: true,
