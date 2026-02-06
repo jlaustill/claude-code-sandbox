@@ -480,11 +480,12 @@ export class WebUIServer {
           },
           this.shadowBasePath,
         );
-        this.shadowRepos.set(containerId, shadowRepo);
         isNewShadowRepo = true;
 
         // Reset shadow repo to match container's branch (important for PR/remote branch scenarios)
+        // Only add to map after successful initialization to allow retry on failure
         await shadowRepo.resetToContainerBranch(containerId);
+        this.shadowRepos.set(containerId, shadowRepo);
       }
 
       // Sync files from container (inotify already told us there are changes)
